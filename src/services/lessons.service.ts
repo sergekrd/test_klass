@@ -23,7 +23,7 @@ export class LessonsService {
         teachers: { ...(teacherIds != undefined ? this.teachersParse(teacherIds) : null) },
         ...(studentsCount != undefined ? { studentsCountHaving: this.studentsCountParse(studentsCount) } : null),
         lessonIds: [],
-        limit: lessonsPerPage | 10,
+        limit: lessonsPerPage | 5,
         page: page || 0,
       };
       let lessonTeachers;
