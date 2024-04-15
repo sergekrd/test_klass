@@ -46,15 +46,19 @@ export class LessonsService {
       // таблица LessonStudents имеет больше всего записей и это попытка сократить время обработки запроса
       // lesson_id связанные с фильтром (сужаем поиск)
       if (studentsCount) {
-        //обход долгого кейса с поиском по всем урокам-ученикам
+        //обход сложного кейса с поиском по всем урокам-ученикам
         //если можно сузить поиск по фильтрам уроков, делаем
-        if (!teacherIds && (date || status)) {
+        if (!teacherIds && date || !teacherIds &&status) {
           const lessons = await this.findLessons(mapper);
           mapper.lessonIds = lessons.map((lesson) => String(lesson.id));
           lessonStudents = await this.studentsOnLesson(mapper);
+          //есть фильтр teacherIds ищем по его результатам
+        } else if (teacherIds){
+          lessonStudents = await this.studentsOnLesson(mapper);
+        }
           //если нет, то единственный указанный фильтр-количество посещений
           //ищем с page & offset
-        } else {
+        else{
           lessonStudents = await this.studentsOnLesson(mapper, mapper.limit, mapper.page);
         }
 
@@ -88,6 +92,8 @@ export class LessonsService {
         (lesson as any).visitCount = students[lesson.id] ?students[lesson.id].visitCount: 0;
         (lesson as any).students = students[lesson.id] ?students[lesson.id].students: [];
         (lesson as any).teachers = teachers[lesson.id] || [];
+        (lesson as any).students.sort((a, b) => a.id - b.id);
+        (lesson as any).teachers.sort((a, b) => a.id - b.id);
         return lesson;
       });
       return { status_code: 200, data: result };
@@ -195,7 +201,6 @@ export class LessonsService {
   private async studentsOnLesson(mapper: Mapper, limit = undefined, page = undefined) {
     const startTime = performance.now();
     const whereCondition = {
-      ...(Object.keys(mapper.teachers).length > 0 ? mapper.teachers : {}),
       ...(mapper.lessonIds.length > 0 ? { lesson_id: { [Op.in]: mapper.lessonIds } } : null),
     };
     const result = await LessonStudents.findAll({
