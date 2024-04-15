@@ -5,4 +5,4 @@ COPY .env ./
 RUN npm install
 COPY . .
 EXPOSE 5015
-CMD ["sh", "ls -a && ts-node src/server.ts"]
+CMD ["sh", "-c", "ls -a && ts-node src/server.ts"]
