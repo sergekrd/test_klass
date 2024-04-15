@@ -1,0 +1,17 @@
+version: '1.0'
+
+services:
+  main:
+    container_name: main
+    build:
+      context: .
+    env_file:
+      - .env
+    volumes:
+      - .:/src
+      - /app/node_modules
+    ports:
+      - 5015:5015
+    command: npm run start:docker
+    restart: always
+
