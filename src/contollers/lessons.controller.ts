@@ -7,7 +7,7 @@ export class LessonController {
     const lessonsService = new LessonsService();
     try {
       // Вызываем сервис для получения занятий с учетом параметров фильтрации
-      const lessons = await lessonsService.getLessons(req.body);
+      const lessons = await lessonsService.getLessons(req.query);
 
       // Возвращаем результат
       return sendResponse(res, lessons);

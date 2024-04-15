@@ -7,7 +7,7 @@ const lessonsRouter = express.Router();
 const lessonController = new LessonController();
 
 // Маршрут для получения занятий
-lessonsRouter.post('/lessons', lessonController.getLessons.bind(lessonController));
+lessonsRouter.get('/lessons', lessonController.getLessons.bind(lessonController));
 
 //Обработка ошибок
 lessonsRouter.use(errorHandler);
