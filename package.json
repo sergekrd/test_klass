@@ -6,7 +6,6 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "ts-node src/server.ts",
-    "start:prod": "node dist/server",
     "seed:teachers": "ts-node src/sequelize/seeders/teachers.ts",
     "seed:students": "ts-node src/sequelize/seeders/students.ts",
     "seed:lessons": "ts-node src/sequelize/seeders/lessons.ts",
