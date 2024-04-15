@@ -1,4 +1,5 @@
 import { Op } from 'sequelize';
+import { Where } from 'sequelize/types/utils';
 
 export interface Mapper {
   lessons?: {
@@ -14,7 +15,7 @@ export interface Mapper {
       [Op.in]: number[];
     };
   };
-  studentsCount: number[];
+  studentsCountHaving: { having: Where } | { having: { [Op.and]: Where[] } };
   lessonIds: string[];
   limit: number;
   page: number;

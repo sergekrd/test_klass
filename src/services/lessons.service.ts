@@ -21,7 +21,7 @@ export class LessonsService {
           ...(status != undefined ? this.statusParse(status) : null),
         },
         teachers: { ...(teacherIds != undefined ? this.teachersParse(teacherIds) : null) },
-        ...(studentsCount != undefined ? { studentsCount: this.studentsCountParse(studentsCount) } : null),
+        ...(studentsCount != undefined ? { studentsCountHaving: this.studentsCountParse(studentsCount) } : null),
         lessonIds: [],
         limit: lessonsPerPage | 10,
         page: page || 0,
@@ -46,7 +46,18 @@ export class LessonsService {
       // таблица LessonStudents имеет больше всего записей и это попытка сократить время обработки запроса
       // lesson_id связанные с фильтром (сужаем поиск)
       if (studentsCount) {
-        lessonStudents = await this.studentsOnLesson(mapper);
+        //обход долгого кейса с поиском по всем урокам-ученикам
+        //если можно сузить поиск по фильтрам уроков, делаем
+        if (!teacherIds && (date || status)) {
+          const lessons = await this.findLessons(mapper);
+          mapper.lessonIds = lessons.map((lesson) => String(lesson.id));
+          lessonStudents = await this.studentsOnLesson(mapper);
+          //если нет, то единственный указанный фильтр-количество посещений
+          //ищем с page & offset
+        } else {
+          lessonStudents = await this.studentsOnLesson(mapper, mapper.limit, mapper.page);
+        }
+
         mapper.lessonIds = Object.keys(lessonStudents);
       }
 
@@ -74,8 +85,8 @@ export class LessonsService {
 
       // собираем конечный объект
       const result = lessons.map((lesson) => {
-        (lesson as any).visitCount = students[lesson.id] || 0;
-        (lesson as any).students = students[lesson.id] || [];
+        (lesson as any).visitCount = students[lesson.id] ?students[lesson.id].visitCount: 0;
+        (lesson as any).students = students[lesson.id] ?students[lesson.id].students: [];
         (lesson as any).teachers = teachers[lesson.id] || [];
         return lesson;
       });
@@ -181,39 +192,39 @@ export class LessonsService {
     }, {});
   }
 
-  private async studentsOnLesson(mapper: Mapper) {
+  private async studentsOnLesson(mapper: Mapper, limit = undefined, page = undefined) {
     const startTime = performance.now();
+    const whereCondition = {
+      ...(Object.keys(mapper.teachers).length > 0 ? mapper.teachers : {}),
+      ...(mapper.lessonIds.length > 0 ? { lesson_id: { [Op.in]: mapper.lessonIds } } : null),
+    };
     const result = await LessonStudents.findAll({
-      where: {
-        ...(mapper.lessonIds.length > 0 ? { lesson_id: { [Op.in]: mapper.lessonIds } } : {}),
-      },
+      where: whereCondition,
+      attributes: [
+        'lesson_id',
+        [
+          sequelize.fn('ARRAY_AGG', sequelize.literal(`json_build_object('id', student_id, 'visit', visit)`)),
+          'students',
+        ],
+      ],
+      group: ['lesson_id'],
+      ...(mapper.studentsCountHaving ? mapper.studentsCountHaving : {}),
+      order: [['lesson_id', 'ASC']],
+      ...(limit !== undefined ? { limit: limit } : {}),
+      ...(page !== undefined ? { offset: page * limit } : {}),
       raw: true,
     });
     const endTime = performance.now();
     console.log('studentsOnLesson execution time: ', endTime - startTime, 'milliseconds');
-    const mappedVisits = result.reduce((obj, lesson) => {
-      const summ = lesson.visit ? 1 : 0;
-      if (obj[lesson.lesson_id]) {
-        obj[lesson.lesson_id].visitCount += summ;
-        obj[lesson.lesson_id].students.push({ id: lesson.student_id, visit: lesson.visit });
-      } else {
-        obj[lesson.lesson_id] = { visitCount: summ, students: [{ id: lesson.student_id, visit: lesson.visit }] };
-      }
+    const mappedVisits = result.reduce((obj,val) => {
+      const lesson = val as any;
+      const visited = lesson.students.filter((student) => student.visit);
+      lesson.visitCount = visited.length;
+
+      obj[lesson.lesson_id]=lesson
+      delete  obj[lesson.lesson_id].lesson_id
       return obj;
-    }, {});
-    if (mapper.studentsCount) {
-      return Object.fromEntries(
-        Object.entries(mappedVisits).filter(([key, value]) => {
-          if (mapper.studentsCount.length == 1) return (value as any).students.length === mapper.studentsCount[0];
-          else {
-            return (
-              (value as any).students.length >= mapper.studentsCount[0] &&
-              (value as any).students.length <= mapper.studentsCount[1]
-            );
-          }
-        }),
-      );
-    }
+    },{});
     return mappedVisits;
   }
 
@@ -269,11 +280,25 @@ export class LessonsService {
         throw new CustomError(400, `Неверный формат данных studentsCount: ${val} должно быть числом`);
       return numberValue;
     });
-    if (valuesNumbersArray.length < 1 || valuesNumbersArray.length > 2)
-      throw new CustomError(
-        400,
-        `Неверный формат данных, studentsCount: ${value} должно содержать одно или два числа (3 или 3,7)`,
-      );
-    return valuesNumbersArray;
+    switch (valuesNumbersArray.length) {
+      case 1:
+        return {
+          having: sequelize.where(sequelize.fn('COUNT', sequelize.col('student_id')), '=', valuesNumbersArray[0]),
+        };
+      case 2:
+        return {
+          having: {
+            [Op.and]: [
+              sequelize.where(sequelize.fn('COUNT', sequelize.col('student_id')), '>=', valuesNumbersArray[0]),
+              sequelize.where(sequelize.fn('COUNT', sequelize.col('student_id')), '<=', valuesNumbersArray[1]),
+            ],
+          },
+        };
+      default:
+        throw new CustomError(
+          400,
+          `Неверный формат данных, studentsCount: ${value} должно содержать одно или два числа (3 или 3,7)`,
+        );
+    }
   }
 }
