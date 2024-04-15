@@ -5,4 +5,4 @@ COPY .env ./
 RUN npm install --omit-dev
 COPY . .
 EXPOSE 5015
-CMD ["sh", "node dist/server.js"]
+CMD ["npm", "start:prod"]
