@@ -12,6 +12,6 @@ services:
       - /app/node_modules
     ports:
       - 5015:5015
-    command: npm run start:docker
+    command: npm run start:prod
     restart: always
 
