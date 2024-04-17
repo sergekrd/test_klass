@@ -236,6 +236,7 @@ export class LessonsService {
   ) AS "students"
   FROM "lessons" AS "lesson"
   LEFT OUTER JOIN "lesson_students" AS "students" ON "lesson"."id" = "students"."lesson_id"
+ ${mapper.lessonIds.length > 0 ? `WHERE "lesson"."id" IN (${mapper.lessonIds.join(', ')})` : ''}
   GROUP BY "lesson"."id"
   ${mapper.studentsCountHaving.havingString}
   ORDER BY "lesson"."id" ASC
