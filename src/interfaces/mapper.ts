@@ -15,7 +15,13 @@ export interface Mapper {
       [Op.in]: number[];
     };
   };
-  studentsCountHaving: { having: Where } | { having: { [Op.and]: Where[] } };
+  studentsCountHaving:
+    {
+        whereCondition: { having: Where };
+        emptyFlag?: boolean;
+        havingString?: string;
+      }
+    | { whereCondition: { having: { [Op.and]: Where[] } }; emptyFlag?: boolean; havingString?: string };
   lessonIds: string[];
   limit: number;
   page: number;

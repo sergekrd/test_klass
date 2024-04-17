@@ -1,4 +1,4 @@
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import { Lesson } from '../sequelize/models/lessons';
 import { LessonStudents } from '../sequelize/models/lessonStudents';
 import { Teacher } from '../sequelize/models/teachers';
@@ -23,8 +23,8 @@ export class LessonsService {
         teachers: { ...(teacherIds != undefined ? this.teachersParse(teacherIds) : null) },
         ...(studentsCount != undefined ? { studentsCountHaving: this.studentsCountParse(studentsCount) } : null),
         lessonIds: [],
-        limit: lessonsPerPage | 5,
-        page: page || 0,
+        limit: Number(lessonsPerPage) || 5,
+        page: Number(page) >= 1 ? Number(page) - 1 : 0,
       };
       let lessonTeachers;
       let lessonStudents;
@@ -48,17 +48,17 @@ export class LessonsService {
       if (studentsCount) {
         //обход сложного кейса с поиском по всем урокам-ученикам
         //если можно сузить поиск по фильтрам уроков, делаем
-        if (!teacherIds && date || !teacherIds &&status) {
+        if ((!teacherIds && date) || (!teacherIds && status)) {
           const lessons = await this.findLessons(mapper);
           mapper.lessonIds = lessons.map((lesson) => String(lesson.id));
           lessonStudents = await this.studentsOnLesson(mapper);
           //есть фильтр teacherIds ищем по его результатам
-        } else if (teacherIds){
+        } else if (teacherIds) {
           lessonStudents = await this.studentsOnLesson(mapper);
         }
-          //если нет, то единственный указанный фильтр-количество посещений
-          //ищем с page & offset
-        else{
+        //если нет, то единственный указанный фильтр-количество посещений
+        //ищем с page & offset
+        else {
           lessonStudents = await this.studentsOnLesson(mapper, mapper.limit, mapper.page);
         }
 
@@ -89,8 +89,8 @@ export class LessonsService {
 
       // собираем конечный объект
       const result = lessons.map((lesson) => {
-        (lesson as any).visitCount = students[lesson.id] ?students[lesson.id].visitCount: 0;
-        (lesson as any).students = students[lesson.id] ?students[lesson.id].students: [];
+        (lesson as any).visitCount = students[lesson.id] ? students[lesson.id].visitCount : 0;
+        (lesson as any).students = students[lesson.id] ? students[lesson.id].students : [];
         (lesson as any).teachers = teachers[lesson.id] || [];
         (lesson as any).students.sort((a, b) => a.id - b.id);
         (lesson as any).teachers.sort((a, b) => a.id - b.id);
@@ -126,8 +126,14 @@ export class LessonsService {
       ...(Object.keys(mapper.teachers).length > 0 ? mapper.teachers : {}),
       ...(mapper.lessonIds.length > 0 ? { lesson_id: { [Op.in]: mapper.lessonIds } } : null),
     };
-    const lessonTeachers = (await LessonTeachers.findAll({
+    const lessonsWithTeachers = await LessonTeachers.findAll({
       where: whereCondition,
+      attributes: ['lesson_id'],
+      raw: true,
+    });
+    const lessonsIdArray = lessonsWithTeachers.map((entry) => entry.lesson_id);
+    const lessonTeachers = (await LessonTeachers.findAll({
+      where: { lesson_id: { [Op.in]: lessonsIdArray } },
       attributes: ['lesson_id', [sequelize.fn('array_agg', sequelize.col('teacher_id')), 'teachers']],
       group: ['lesson_id'],
       raw: true,
@@ -186,13 +192,16 @@ export class LessonsService {
     return filteredLessonStudents.reduce((obj, student) => {
       obj[Number(student[0])] = {
         visitCount: student[1].visitCount,
-        students: student[1].students.map((student) => {
-          return {
-            id: student.id,
-            name: students.filter((value) => value.id === student.id)[0].name,
-            visit: student.visit,
-          };
-        }),
+        students:
+          student[1].students[0].id === null
+            ? []
+            : student[1].students.map((student) => {
+                return {
+                  id: student.id,
+                  name: students.filter((value) => value.id === student.id)[0].name,
+                  visit: student.visit,
+                };
+              }),
       };
       return obj;
     }, {});
@@ -203,33 +212,55 @@ export class LessonsService {
     const whereCondition = {
       ...(mapper.lessonIds.length > 0 ? { lesson_id: { [Op.in]: mapper.lessonIds } } : null),
     };
-    const result = await LessonStudents.findAll({
-      where: whereCondition,
-      attributes: [
-        'lesson_id',
-        [
-          sequelize.fn('ARRAY_AGG', sequelize.literal(`json_build_object('id', student_id, 'visit', visit)`)),
-          'students',
+    let result;
+    if (!mapper.studentsCountHaving?.emptyFlag) {
+      result = (await LessonStudents.findAll({
+        where: whereCondition,
+        attributes: [
+          'lesson_id',
+          [
+            sequelize.fn('ARRAY_AGG', sequelize.literal(`json_build_object('id', student_id, 'visit', visit)`)),
+            'students',
+          ],
         ],
-      ],
-      group: ['lesson_id'],
-      ...(mapper.studentsCountHaving ? mapper.studentsCountHaving : {}),
-      order: [['lesson_id', 'ASC']],
-      ...(limit !== undefined ? { limit: limit } : {}),
-      ...(page !== undefined ? { offset: page * limit } : {}),
-      raw: true,
-    });
+        group: ['lesson_id'],
+        ...(mapper?.studentsCountHaving?.whereCondition ? mapper.studentsCountHaving.whereCondition : {}),
+        order: [['lesson_id', 'ASC']],
+        ...(limit !== undefined ? { limit: limit } : {}),
+        ...(page !== undefined ? { offset: page * limit } : {}),
+        raw: true,
+      })) as any;
+    } else {
+      const queryString = `SELECT "lesson"."id", ARRAY_AGG(
+      json_build_object('id', "students"."student_id", 'visit', "students"."visit", 'lesson_id', "students"."lesson_id")
+  ) AS "students"
+  FROM "lessons" AS "lesson"
+  LEFT OUTER JOIN "lesson_students" AS "students" ON "lesson"."id" = "students"."lesson_id"
+  GROUP BY "lesson"."id"
+  ${mapper.studentsCountHaving.havingString}
+  ORDER BY "lesson"."id" ASC
+  ${limit !== undefined ? 'LIMIT ' + limit : ''}
+  ${page !== undefined ? 'OFFSET ' + page * limit : ''}
+  ;`;
+      result = (await sequelize.query(
+        queryString,
+
+        { type: QueryTypes.SELECT },
+      )) as any;
+    }
+
     const endTime = performance.now();
     console.log('studentsOnLesson execution time: ', endTime - startTime, 'milliseconds');
-    const mappedVisits = result.reduce((obj,val) => {
+    const mappedVisits = result.reduce((obj, val) => {
       const lesson = val as any;
       const visited = lesson.students.filter((student) => student.visit);
+      const key = lesson.lesson_id || lesson.id;
       lesson.visitCount = visited.length;
 
-      obj[lesson.lesson_id]=lesson
-      delete  obj[lesson.lesson_id].lesson_id
+      obj[key] = lesson;
+      delete obj[key].lesson_id;
       return obj;
-    },{});
+    }, {});
     return mappedVisits;
   }
 
@@ -285,19 +316,34 @@ export class LessonsService {
         throw new CustomError(400, `Неверный формат данных studentsCount: ${val} должно быть числом`);
       return numberValue;
     });
+    let emptyFlag = false;
+    if (valuesNumbersArray.includes(0)) {
+      emptyFlag = true;
+    }
     switch (valuesNumbersArray.length) {
       case 1:
         return {
-          having: sequelize.where(sequelize.fn('COUNT', sequelize.col('student_id')), '=', valuesNumbersArray[0]),
+          whereCondition: {
+            having: sequelize.where(sequelize.fn('COUNT', sequelize.col('student_id')), '=', valuesNumbersArray[0]),
+          },
+          ...(emptyFlag ? { emptyFlag, havingString: 'HAVING COUNT(COALESCE("students"."student_id", 0)) = 1' } : {}),
         };
       case 2:
         return {
-          having: {
-            [Op.and]: [
-              sequelize.where(sequelize.fn('COUNT', sequelize.col('student_id')), '>=', valuesNumbersArray[0]),
-              sequelize.where(sequelize.fn('COUNT', sequelize.col('student_id')), '<=', valuesNumbersArray[1]),
-            ],
+          whereCondition: {
+            having: {
+              [Op.and]: [
+                sequelize.where(sequelize.fn('COUNT', sequelize.col('student_id')), '>=', valuesNumbersArray[0]),
+                sequelize.where(sequelize.fn('COUNT', sequelize.col('student_id')), '<=', valuesNumbersArray[1]),
+              ],
+            },
           },
+          ...(emptyFlag
+            ? {
+                emptyFlag,
+                havingString: `HAVING COUNT("students"."student_id") BETWEEN ${valuesNumbersArray[0]} AND ${valuesNumbersArray[1]}`,
+              }
+            : {}),
         };
       default:
         throw new CustomError(
